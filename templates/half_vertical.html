@@ -1,47 +1,60 @@
 {%- assign has_week = false -%}
 {%- if w_pct != "—" and w_pct != nil -%}{%- assign has_week = true -%}{%- endif -%}
 {%- assign age = "now" | date: "%s" | minus: ts -%}
+{%- assign time = updated | split: ", " | last -%}
     <div class="layout layout--col layout--stretch-x gap--space-between py--2 px--4 lg:py--4 lg:px--6">
 
-      <!-- Header: what this is, and whose plan -->
-      <div class="w--full flex flex--row flex--between">
+      <!-- Header: title, then when the data was sent and the plan -->
+      <div class="w--full flex flex--row flex--between flex--center-y">
         <span class="title title--small lg:title--large">Claude Code</span>
-        {% if plan != "" %}<span class="label label--outline lg:label--large">{{ plan }}</span>{% endif %}
+        <div class="flex flex--row flex--center-y gap--small">
+          {% if age > 1800 %}
+          <span class="label label--inverted lg:label--large">stale · {{ time }}</span>
+          {% else %}
+          <div class="flex flex--row flex--center-y gap--xsmall">
+            <svg class="w--4 h--4 lg:w--6 lg:h--6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 13A8.5 8.5 0 1 1 18 6.5"/><path d="M20 3v4.5h-4.5"/><path d="M12 8v4.5l3 2"/></svg>
+            <span class="label lg:label--large">{{ time }}</span>
+          </div>
+          {% endif %}
+          {% if plan != "" %}<span class="label label--outline lg:label--large">{{ plan }}</span>{% endif %}
+        </div>
       </div>
 
       {% if has_week and w_alert %}
       <!-- Alert: the weekly limit runs out before it resets -->
       <div class="w--full bg--black rounded p--3 flex flex--col flex--left gap--xsmall">
-        <span class="label label--inverted lg:label--large">Weekly limit</span>
         {% if w_out == "now" %}
+        <span class="label label--inverted lg:label--large">weekly limit</span>
         <span class="value value--large lg:value--xlarge text--white">Reached</span>
         <span class="label label--inverted lg:label--large">resets {{ w_reset }}</span>
         {% elsif w_out != "" %}
-        <span class="label label--inverted lg:label--large">runs out at the last 24 hours' rate</span>
+        <span class="label label--inverted lg:label--large">weekly limit runs out</span>
         <span class="value value--large lg:value--xlarge text--white">{{ w_out }}</span>
         <span class="label label--inverted lg:label--large">{{ w_pct }}% used · resets {{ w_reset }}</span>
         {% else %}
+        <span class="label label--inverted lg:label--large">weekly limit</span>
         <span class="value value--large lg:value--xlarge text--white value--tnums">{{ w_pct }}%</span>
         <span class="label label--inverted lg:label--large">resets {{ w_reset }}</span>
         {% endif %}
       </div>
       {% elsif has_week %}
-      <!-- Main number: the weekly limit, with where it is heading -->
-      <div class="w--full flex flex--col flex--left gap--xsmall">
-        <div class="w--full flex flex--row flex--between flex--bottom">
+      <!-- Main number: the weekly limit, where it is heading, and how much week is left -->
+      <div class="w--full flex flex--col flex--left gap--small">
+        <div class="w--full flex flex--row flex--between flex--center-y">
           <span class="value value--large lg:value--xlarge value--tnums">{{ w_pct }}%</span>
-          <div class="flex flex--col flex--right">
-            <span class="title title--small lg:title--large">Weekly limit</span>
-            <span class="label lg:label--large">resets {{ w_reset }}</span>
+          <div class="flex flex--col flex--right gap--xsmall">
             <span class="label lg:label--large">on pace for {{ w_proj }}%</span>
+            <span class="label lg:label--large">resets {{ w_reset }}</span>
           </div>
         </div>
-        <div class="w--full relative">
-          <div class="w--full progress-bar progress-bar--large"><div class="track"><div class="fill" style="width:{{ w_pct }}%"></div></div></div>
-          <div class="absolute top--0 h--full bg--black" style="left:{{ w_even }}%; width:3px;"></div>
-        </div>
-        <div class="w--full flex flex--row flex--end">
-          <span class="label label--small lg:label--base">tick: {{ w_even }}% of the week gone</span>
+        <div class="w--full relative h--14">
+          <div class="absolute top--0 w--full progress-bar progress-bar--large"><div class="track"><div class="fill" style="width:{{ w_pct }}%"></div></div></div>
+          <div class="absolute top--0 h--10 bg--black" style="left:{{ w_even }}%; width:3px;"></div>
+          {% if w_even > 50 %}
+          <span class="absolute top--10 label lg:label--large" style="right:{{ 100 | minus: w_even }}%;">{{ w_even }}% of week gone</span>
+          {% else %}
+          <span class="absolute top--10 label lg:label--large" style="left:{{ w_even }}%;">{{ w_even }}% of week gone</span>
+          {% endif %}
         </div>
       </div>
       {% else %}
@@ -52,13 +65,18 @@
       </div>
       {% endif %}
 
+      <div class="divider"></div>
+
       <!-- Today -->
-      <div class="w--full flex flex--col flex--left">
+      <div class="w--full flex flex--col flex--left gap--xsmall">
         <div class="w--full flex flex--row flex--between flex--bottom">
-          <span class="title title--small lg:title--large">Today {{ t_cost }}</span>
-          {% if t_delta != "" %}<span class="label lg:label--large">{{ t_delta }} vs yesterday</span>{% endif %}
+          <span class="title title--small lg:title--large">Today</span>
+          <span class="title title--small lg:title--large">{{ t_total }} tokens</span>
         </div>
-        <span class="label lg:label--large">{{ t_sessions }} sessions · {{ t_total }} tokens</span>
+        <div class="w--full flex flex--row flex--between">
+          <span class="label lg:label--large">{% if t_delta != "" %}{{ t_delta }} vs yesterday{% endif %}</span>
+          <span class="label lg:label--large">{{ t_sessions }} sessions · {{ t_cost }}</span>
+        </div>
       </div>
 
       <div class="divider"></div>
@@ -81,27 +99,19 @@
           <span class="stretch text--center label label--small lg:label--base{% if forloop.last %} label--inverted{% endif %}">{{ d.l }}</span>
           {% endfor %}
         </div>
-        <span class="label lg:label--large">{% if m2_name == "" %}All {{ m1_name }}{% else %}{{ m1_name }} {{ m1_pct }}% · {{ m2_name }} {% if m2_pct == 0 %}<1{% else %}{{ m2_pct }}{% endif %}%{% if m3_name != "" %} · {{ m3_name }} {% if m3_pct == 0 %}<1{% else %}{{ m3_pct }}{% endif %}%{% endif %}{% endif %}</span>
       </div>
 
       <!-- Top projects today, by cost -->
       {% if proj.size > 0 %}
-      <div class="w--full flex flex--col flex--left">
+      <div class="divider"></div>
+      <div class="w--full flex flex--col flex--left gap--xsmall">
+        <span class="title title--small lg:title--large">Top projects today</span>
         {% for p in proj %}
         <div class="w--full flex flex--row flex--between">
           <span class="label lg:label--large" data-clamp="1">{{ p.n }}</span>
           <span class="label lg:label--large">{{ p.c }}</span>
         </div>
         {% endfor %}
-      </div>
-      {% endif %}
-
-      <!-- Footer: freshness. Stale data says so instead. -->
-      {% if age > 1800 %}
-      <span class="w--full text--center label label--inverted lg:label--large">Not updated since {{ updated }}</span>
-      {% else %}
-      <div class="w--full flex flex--row flex--end">
-        <span class="label lg:label--large">{{ updated | split: ", " | last }}</span>
       </div>
       {% endif %}
     </div>
