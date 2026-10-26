@@ -109,12 +109,31 @@ def _find_claude_dir():
     return home / ".claude"
 
 
-def _read_credentials(claude_dir):
+def _credentials_json(claude_dir):
+    """Raw credentials JSON. macOS keeps it in the login Keychain, not a file."""
     cred = claude_dir / ".credentials.json"
-    if not cred.exists():
+    if cred.exists():
+        return cred.read_text("utf-8")
+    if sys.platform == "darwin":
+        import subprocess
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, timeout=10,
+        )
+        if r.returncode == 0:
+            return r.stdout.decode("utf-8")
+    return None
+
+
+def _read_credentials(claude_dir):
+    try:
+        raw = _credentials_json(claude_dir)
+    except Exception:
+        raw = None
+    if not raw:
         return "Unknown", "—"
     try:
-        data = json.loads(cred.read_text("utf-8"))
+        data = json.loads(raw)
         oauth = data.get("claudeAiOauth", {})
         sub = oauth.get("subscriptionType", "unknown").capitalize()
         tier = oauth.get("rateLimitTier", "")
