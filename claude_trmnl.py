@@ -185,6 +185,7 @@ def _scan_usage(claude_dir, since):
     daily = defaultdict(lambda: {
         "input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
         "cost": 0.0, "messages": 0, "sessions": set(),
+        "projects": defaultdict(float),
     })
     models = defaultdict(lambda: {"tokens": 0, "messages": 0, "cost": 0.0})
     projects = defaultdict(lambda: {"tokens": 0, "messages": 0})
@@ -197,18 +198,35 @@ def _scan_usage(claude_dir, since):
             if not pdir.is_dir():
                 continue
             proj = _project_name(pdir.name)
-            for jf in pdir.glob("*.jsonl"):
+            # Subagent logs sit next to their session: <session>/subagents/*.jsonl.
+            # They count toward usage but belong to the parent session.
+            logs = [(jf, jf.stem) for jf in pdir.glob("*.jsonl")]
+            logs += [(jf, jf.parent.parent.name) for jf in pdir.glob("*/subagents/*.jsonl")]
+            for jf, session in logs:
                 try:
                     if jf.stat().st_mtime < since_epoch - 3600:
                         continue
                 except OSError:
                     continue
-                _process_jsonl(jf, since, daily, models, projects, proj)
+                _process_jsonl(jf, since, daily, models, projects, proj, session)
 
     return daily, models, projects
 
 
-def _process_jsonl(path, since, daily, models, projects, proj):
+def _repo_name(cwd):
+    """The repository a session ran in, with worktrees folded into it.
+
+    '/x/pattern_platform/.claude/worktrees/pp-146' -> 'pattern_platform'
+    '/x/.ao/data/worktrees/pattern_platform/pattern_platform-2' -> 'pattern_platform'
+    """
+    if "/.claude/worktrees/" in cwd:
+        cwd = cwd.split("/.claude/worktrees/")[0]
+    elif "/worktrees/" in cwd:
+        return cwd.split("/worktrees/")[1].split("/")[0]
+    return os.path.basename(cwd.rstrip("/")) or cwd
+
+
+def _process_jsonl(path, since, daily, models, projects, proj, session):
     session_days = set()
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -254,8 +272,9 @@ def _process_jsonl(path, since, daily, models, projects, proj):
                 d["cache_write"] += cw
                 d["cost"] += cost
                 d["messages"] += 1
+                d["projects"][_repo_name(entry["cwd"]) if entry.get("cwd") else proj] += cost
                 if dk not in session_days:
-                    d["sessions"].add(path.stem)
+                    d["sessions"].add(session)
                     session_days.add(dk)
 
                 models[mk]["tokens"] += total
@@ -284,14 +303,14 @@ def _sparkline(daily, days=7):
     return "".join(blocks[min(8, int(v / mx * 8))] for v in vals)
 
 
-def _day_bars(daily, days=7, steps=16):
+def _day_bars(daily, days=7, steps=14):
     """Daily API-equivalent cost as bar heights from 0 to steps, oldest first.
 
-    Heights map to the framework's h--N classes, which exist for 0-12, 14 and
-    16 only, so each height snaps to the nearest of those. A day with any usage
+    Heights map to the framework's h--N classes, which exist for 0-12 and 14
+    (then 16, 20...), so each height snaps to the nearest of those. A day with any usage
     gets at least h--1 and stays visible next to a heavy day.
     """
-    sizes = [*range(13), 14, 16]
+    sizes = [*range(13), 14]
 
     def snap(c):
         if c <= 0:
@@ -521,6 +540,80 @@ def _short_reset(text):
     return re.sub(r"(?<=[A-Za-z])(?=\d)", " ", text)
 
 
+def _parse_reset(text, now):
+    """'Oct 28 at 2pm' or '10:40pm' -> the next matching local datetime."""
+    import re
+    m = re.match(r"(?:([A-Z][a-z]{2}) (\d{1,2}) at )?(\d{1,2})(?::(\d{2}))?\s*([ap]m)", text or "")
+    if not m:
+        return None
+    mon, day, hh, mm, ap = m.groups()
+    hour = int(hh) % 12 + (12 if ap == "pm" else 0)
+    when = now.replace(hour=hour, minute=int(mm or 0), second=0, microsecond=0)
+    if mon:
+        when = when.replace(month=datetime.strptime(mon, "%b").month, day=int(day))
+        if when < now - timedelta(days=1):
+            when = when.replace(year=when.year + 1)
+    elif when < now:
+        when += timedelta(days=1)
+    return when
+
+
+def _fmt_when(dt):
+    """'Tue 3pm'. Built by hand because %-I does not exist on Windows."""
+    hour = dt.hour % 12 or 12
+    minutes = f":{dt.minute:02d}" if dt.minute else ""
+    return f"{dt:%a} {hour}{minutes}{'am' if dt.hour < 12 else 'pm'}"
+
+
+def _week_forecast(pct, reset, now, claude_dir):
+    """Where weekly usage will land at the reset, at the last 24 hours' rate.
+
+    Each run appends a reading to a small history file. The rate comes from
+    the reading closest to 24 hours ago; until a day of readings exists it
+    falls back to the average since the week started.
+    """
+    path = claude_dir / ".trmnl_week_history.json"
+    try:
+        history = json.loads(path.read_text("utf-8"))
+    except Exception:
+        history = []
+    t = now.timestamp()
+    # Usage only drops when the week resets, so older readings no longer apply
+    if history and pct < history[-1][1]:
+        history = []
+    history = [h for h in history if t - h[0] <= 36 * 3600] + [[t, pct]]
+    try:
+        path.write_text(json.dumps(history), encoding="utf-8")
+    except Exception:
+        pass
+
+    week_start = reset - timedelta(days=7)
+    elapsed_h = max(0.0, (now - week_start).total_seconds() / 3600)
+    left_h = max(0.0, (reset - now).total_seconds() / 3600)
+    old = [h for h in history if t - h[0] >= 20 * 3600]
+    if old:
+        then, then_pct = min(old, key=lambda h: abs(t - h[0] - 24 * 3600))
+        rate = (pct - then_pct) / ((t - then) / 3600)
+        basis = "24h"
+    else:
+        rate = pct / elapsed_h if elapsed_h else 0.0
+        basis = "week"
+
+    projected = round(pct + rate * left_h)
+    runs_out = ""
+    if pct >= 100:
+        runs_out = "now"
+    elif rate > 0 and projected >= 100:
+        runs_out = _fmt_when(now + timedelta(hours=(100 - pct) / rate))
+    return {
+        "w_even": min(100, round(elapsed_h / (7 * 24) * 100)),
+        "w_proj": min(projected, 999),
+        "w_out": runs_out,
+        "w_basis": basis,
+        "w_alert": bool(runs_out) or pct >= 90,
+    }
+
+
 # ── Build TRMNL payload ─────────────────────────────────────────────
 
 def build_payload(scrape=True):
@@ -632,6 +725,20 @@ def build_payload(scrape=True):
         "ts": int(now.timestamp()),
     }
 
+    # Weekly limit, the main number on the half-vertical view
+    week_pct = usage_limits.get("week_all", {}).get("pct")
+    reset = _parse_reset(_short_reset(usage_limits.get("week_all", {}).get("resets")), now)
+    mv["w_pct"] = week_pct if week_pct is not None else "—"
+    mv["w_reset"] = _fmt_when(reset) if reset else ""
+    if week_pct is not None and reset:
+        mv.update(_week_forecast(week_pct, reset, now, cd))
+    else:
+        mv.update(w_even=0, w_proj=0, w_out="", w_basis="", w_alert=False)
+
+    # Top projects today by cost
+    today_projects = sorted(td.get("projects", {}).items(), key=lambda x: x[1], reverse=True)
+    mv["proj"] = [{"n": n, "c": fmt_cost(c)} for n, c in today_projects[:3] if c > 0]
+
     # Model slots (up to 3)
     for i in range(3):
         idx = i + 1
@@ -701,7 +808,7 @@ def _test_payload():
         "d7_tokens": "41.7M",
         "d7_cost": "$96.20",
         "days": [{"l": l, "h": h, "c": ""} for l, h in
-                 zip("TWTFSSM", [6, 10, 3, 8, 12, 0, 16])],
+                 zip("TWTFSSM", [6, 10, 3, 8, 12, 0, 14])],
         "w_tokens": "28.3M",
         "w_cost": "$67.89",
         "w_sessions": 12,
@@ -727,6 +834,15 @@ def _test_payload():
         "u_sonnet": 5,
         "u_reset": "7pm",
         "u_week_reset": "Thu 9am",
+        "w_pct": 46,
+        "w_reset": "Thu 9am",
+        "w_even": 58,
+        "w_proj": 81,
+        "w_out": "",
+        "w_basis": "24h",
+        "w_alert": False,
+        "proj": [{"n": "trmnl-claude", "c": "$9.80"}, {"n": "pattern_platform", "c": "$6.10"},
+                 {"n": "command-center", "c": "$2.60"}],
         "plan": "Max 20x",
         "ts": int(datetime.now(timezone.utc).timestamp()),
     }
