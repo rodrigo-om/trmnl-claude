@@ -1,101 +1,84 @@
-    <div class="layout layout--col layout--top py--2 px--4 lg:py--4 lg:px--6">
+{%- assign has_limits = false -%}
+{%- if u_session != "—" and u_session != nil -%}{%- assign has_limits = true -%}{%- endif -%}
+{%- assign age = "now" | date: "%s" | minus: ts -%}
+    <div class="layout layout--col layout--stretch-x gap--space-between py--2 px--4 lg:py--4 lg:px--6">
 
-      <!-- Header -->
-      <table class="w--full" style="border-collapse:collapse;">
-        <tr>
-          <td class="title lg:title--large" style="letter-spacing:1px;">CLAUDE CODE</td>
-          <td class="title title--small lg:title--large text--right"><b>{{ sub }}</b> {{ tier }}</td>
-        </tr>
-      </table>
+      <!-- Header: what this is, and whose plan -->
+      <div class="w--full flex flex--between flex--center-y">
+        <span class="title title--small lg:title--large">Claude Code</span>
+        {% if plan != "" %}<span class="label label--outline lg:label--large">{{ plan }}</span>{% endif %}
+      </div>
 
-      {% if u_session != "—" %}
-      <table class="w--full my--0.5" style="border-collapse:collapse;">
-        <tr>
-          <td class="title title--small lg:title--large py--0.5"><b>Sess {{ u_session }}%</b></td>
-          <td class="title title--small lg:title--large py--0.5"><b>Week {{ u_week }}%</b></td>
-          <td class="title title--small lg:title--large py--0.5"><b>Son {{ u_sonnet }}%</b></td>
-        </tr>
-        <tr>
-          <td class="py--0.5 pr--1"><div class="progress-bar progress-bar--xsmall lg:progress-bar--base"><div class="track"><div class="fill" style="width:{{ u_session }}%"></div></div></div></td>
-          <td class="py--0.5 pr--1"><div class="progress-bar progress-bar--xsmall lg:progress-bar--base"><div class="track"><div class="fill" style="width:{{ u_week }}%"></div></div></div></td>
-          <td class="py--0.5 pr--1"><div class="progress-bar progress-bar--xsmall lg:progress-bar--base"><div class="track"><div class="fill" style="width:{{ u_sonnet }}%"></div></div></div></td>
-        </tr>
-      </table>
-      {% endif %}
-
-      <!-- Today -->
-      <p class="title title--small lg:title--large mt--0.5 mb--1 pb--0.5" style="letter-spacing:1px; border-bottom:1px solid #000;">
-        <b>Today {% if trend == "up" %}&#8599;{% elsif trend == "down" %}&#8600;{% endif %}</b>
-      </p>
-
-      <table class="w--full" style="border-collapse:collapse;">
-        <tr>
-          <td class="title title--small lg:title--large pr--2">Input</td>
-          <td class="title title--small lg:title--large text--right"><b>{{ t_input }}</b></td>
-          <td style="width:12px;"></td>
-          <td class="title title--small lg:title--large pr--2">Output</td>
-          <td class="title title--small lg:title--large text--right"><b>{{ t_output }}</b></td>
-        </tr>
-        <tr>
-          <td class="title title--small lg:title--large pr--2">C/Read</td>
-          <td class="title title--small lg:title--large text--right"><b>{{ t_cache_r }}</b></td>
-          <td></td>
-          <td class="title title--small lg:title--large pr--2">C/Write</td>
-          <td class="title title--small lg:title--large text--right"><b>{{ t_cache_w }}</b></td>
-        </tr>
-      </table>
-
-      <table class="w--full mt--0.5" style="border-collapse:collapse;">
-        <tr>
-          <td class="title title--small lg:title--large">Total</td>
-          <td class="value value--small lg:value--large text--right"><b>{{ t_total }}</b></td>
-          <td style="width:12px;"></td>
-          <td class="title title--small lg:title--large">Cost</td>
-          <td class="title title--small lg:title--large text--right"><b>~{{ t_cost }}</b></td>
-        </tr>
-        <tr>
-          <td class="title title--small lg:title--large" colspan="5">{{ t_sessions }} sessions · {{ t_messages }} msgs</td>
-        </tr>
-      </table>
-
-      <!-- Models -->
-      <p class="title title--small lg:title--large mt--1 mb--1 pb--0.5" style="letter-spacing:1px; border-bottom:1px solid #000;">
-        <b>Models (7d)</b>
-      </p>
-
-      {% if m1_name != "" %}
-      <div class="mb--1">
-        <div class="flex flex--between mb--0.5">
-          <span class="title title--small lg:title--large"><b>{{ m1_name }}</b></span>
-          <span class="title title--small lg:title--large">{{ m1_tokens }} · {{ m1_pct }}%</span>
+      <!-- Hero: the one number to read from across the room -->
+      {% if has_limits %}
+      <div class="w--full flex flex--col flex--left gap--small">
+        <div class="w--full flex flex--between flex--bottom">
+          <span class="value value--xxlarge lg:value--xxxlarge value--tnums">{{ u_session }}%</span>
+          <div class="flex flex--col flex--right">
+            {% if u_session >= 80 %}<span class="label label--inverted lg:label--large">Near limit</span>{% endif %}
+            <span class="title title--small lg:title--large">Session</span>
+            {% if u_reset != "" %}<span class="label lg:label--large">resets {{ u_reset }}</span>{% endif %}
+          </div>
         </div>
-        <div class="progress-bar progress-bar--xsmall lg:progress-bar--base"><div class="track"><div class="fill" style="width:{{ m1_pct }}%"></div></div></div>
-      </div>
-      {% endif %}
-      {% if m2_name != "" %}
-      <div class="mb--1">
-        <div class="flex flex--between mb--0.5">
-          <span class="title title--small lg:title--large"><b>{{ m2_name }}</b></span>
-          <span class="title title--small lg:title--large">{{ m2_tokens }} · {{ m2_pct }}%</span>
+        <div class="w--full progress-bar progress-bar--large"><div class="track"><div class="fill" style="width:{{ u_session }}%"></div></div></div>
+        <div class="w--full flex flex--between flex--center-y gap">
+          <span class="label lg:label--large">Week {{ u_week }}%</span>
+          <div class="progress-bar progress-bar--xsmall lg:progress-bar--small stretch"><div class="track"><div class="fill" style="width:{{ u_week }}%"></div></div></div>
+          <span class="label lg:label--large">Sonnet {{ u_sonnet }}%</span>
         </div>
-        <div class="progress-bar progress-bar--xsmall lg:progress-bar--base"><div class="track"><div class="fill" style="width:{{ m2_pct }}%"></div></div></div>
+      </div>
+      <div class="w--full flex flex--between flex--bottom">
+        <span class="title title--small lg:title--large">Today {{ t_cost }}</span>
+        {% if t_delta != "" %}<span class="label lg:label--large">{{ t_delta }} vs yesterday</span>{% endif %}
+      </div>
+      {% else %}
+      <div class="w--full flex flex--col flex--left">
+        <span class="label lg:label--large">Today, at API prices</span>
+        <div class="w--full flex flex--between flex--bottom">
+          <span class="value value--xxlarge lg:value--xxxlarge value--tnums" data-fit-value="true">{{ t_cost }}</span>
+          {% if t_delta != "" %}
+          <div class="flex flex--col flex--right">
+            <span class="title title--small lg:title--large">{{ t_delta }}</span>
+            <span class="label lg:label--large">vs yesterday</span>
+          </div>
+          {% endif %}
+        </div>
       </div>
       {% endif %}
+      <span class="label lg:label--large">{{ t_messages }} messages · {{ t_sessions }} sessions · {{ t_total }} tokens</span>
 
-      <!-- Week -->
-      <p class="title title--small lg:title--large mt--1 mb--1 pb--0.5" style="letter-spacing:1px; border-bottom:1px solid #000;">
-        <b>This Week</b>
-      </p>
-      <span class="title title--small lg:title--large"><b>{{ w_tokens }}</b> · ~{{ w_cost }} · {{ w_sessions }}s</span>
-      <table class="w--full mt--0.5" style="border-collapse:collapse;">
-        <tr>
-          <td class="title title--small lg:title--large" style="letter-spacing:2px;">{{ spark }}</td>
-          <td class="title title--small lg:title--large text--right">{% if streak > 0 %}<b>{{ streak }}d streak</b>{% endif %}</td>
-        </tr>
-      </table>
+      <div class="divider"></div>
 
-      <div class="flex flex--between mt--0.5">
-        {% if active > 0 %}<span class="title title--small lg:title--large">● {{ active }} active</span>{% endif %}
-        <span class="title title--small lg:title--large">{{ updated }}</span>
+      <!-- Last 7 days: daily cost, today in black -->
+      <div class="w--full flex flex--col gap--xsmall">
+        <div class="w--full flex flex--between flex--bottom">
+          <span class="title title--small lg:title--large">Last 7 days</span>
+          <span class="label lg:label--large">{{ d7_cost }} · {{ d7_tokens }} tokens</span>
+        </div>
+        <div class="w--full flex gap--small h--16">
+          {% for d in days %}
+          <div class="stretch h--full flex flex--col flex--end">
+            <div class="w--full h--{{ d.h }} {% if forloop.last %}bg--black{% else %}bg--gray-50{% endif %}"></div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="w--full flex gap--small border--top">
+          {% for d in days %}
+          <span class="stretch text--center label label--small lg:label--base{% if forloop.last %} label--inverted{% endif %}">{{ d.l }}</span>
+          {% endfor %}
+        </div>
       </div>
+
+      <!-- Model mix over the same 7 days -->
+      <span class="label lg:label--large">{% if m2_name == "" %}All {{ m1_name }}{% else %}{{ m1_name }} {{ m1_pct }}% · {{ m2_name }} {{ m2_pct }}%{% if m3_name != "" %} · {{ m3_name }} {{ m3_pct }}%{% endif %}{% endif %}</span>
+
+      <!-- Footer: activity and freshness. Stale data says so instead. -->
+      {% if age > 1800 %}
+      <span class="w--full text--center label label--inverted lg:label--large">Not updated since {{ updated }}</span>
+      {% else %}
+      <div class="w--full flex flex--between flex--center-y">
+        <span class="label lg:label--large">{% if active > 0 %}{{ active }} running now{% else %}Idle{% endif %}{% if streak > 1 %} · {{ streak }}-day streak{% endif %}</span>
+        <span class="label lg:label--large">{{ updated | split: ", " | last }}</span>
+      </div>
+      {% endif %}
     </div>

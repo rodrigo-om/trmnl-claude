@@ -31,6 +31,8 @@ _DEFAULT_PRICE = {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read
 # ── Formatting ───────────────────────────────────────────────────────
 
 def fmt_tokens(n):
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}B"
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1_000:
@@ -224,7 +226,7 @@ def _process_jsonl(path, since, daily, models, projects, proj):
                     continue
                 total = inp + out + cr + cw
                 cost = _calc_cost(mk, inp, out, cw, cr)
-                dk = ts.strftime("%Y-%m-%d")
+                dk = ts.astimezone().strftime("%Y-%m-%d")
 
                 d = daily[dk]
                 d["input"] += inp
@@ -256,18 +258,43 @@ def _day_total(daily, key):
 
 def _sparkline(daily, days=7):
     blocks = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now().date()
     vals = [_day_total(daily, (today - timedelta(days=i)).strftime("%Y-%m-%d"))
             for i in range(days - 1, -1, -1)]
     mx = max(vals) if any(vals) else 1
     return "".join(blocks[min(8, int(v / mx * 8))] for v in vals)
 
 
+def _day_bars(daily, days=7, steps=16):
+    """Daily API-equivalent cost as bar heights from 0 to steps, oldest first.
+
+    Heights map to the framework's h--N classes, which exist for 0-12, 14 and
+    16 only, so each height snaps to the nearest of those. A day with any usage
+    gets at least h--1 and stays visible next to a heavy day.
+    """
+    sizes = [*range(13), 14, 16]
+
+    def snap(c):
+        if c <= 0:
+            return 0
+        return min(sizes[1:], key=lambda s: abs(s - c / mx * steps))
+
+    today = datetime.now().date()
+    keys = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+    costs = [daily.get(d.strftime("%Y-%m-%d"), {}).get("cost", 0.0) for d in keys]
+    mx = max(costs) or 1
+    return [{
+        "l": d.strftime("%a")[0],
+        "h": snap(c),
+        "c": fmt_cost(c) if c > 0 else "",
+    } for d, c in zip(keys, costs)]
+
+
 def _streak(daily):
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now().date()
     s = 0
     d = today
-    # If no usage today yet, start counting from yesterday (handles timezone offsets)
+    # If no usage today yet, start counting from yesterday
     if _day_total(daily, d.strftime("%Y-%m-%d")) == 0:
         d -= timedelta(days=1)
     while _day_total(daily, d.strftime("%Y-%m-%d")) > 0:
@@ -403,13 +430,20 @@ def _parse_usage_output(raw):
     return result
 
 
+def _short_reset(text):
+    """'7pm (America/Sao_Paulo)' -> '7pm'. The time zone never fits on screen."""
+    if not text:
+        return ""
+    return text.split("(")[0].strip()
+
+
 # ── Build TRMNL payload ─────────────────────────────────────────────
 
 def build_payload(scrape=True):
     cd = _find_claude_dir()
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    seven_ago = today_start - timedelta(days=7)
+    seven_ago = today_start - timedelta(days=6)
 
     sub_type, tier = _read_credentials(cd)
     active = _count_active_sessions(cd)
@@ -439,6 +473,13 @@ def build_payload(scrape=True):
         trend = "down"
     else:
         trend = "flat"
+
+    # Today vs yesterday, as a signed percentage for the trend label
+    t_delta = f"{(t_total - y_total) / y_total * 100:+.0f}%" if y_total else ""
+
+    # Rolling 7 days (today included), the same window the model breakdown uses
+    d7_tokens = sum(_day_total(daily, dk) for dk in daily)
+    d7_cost = sum(dd.get("cost", 0.0) for dd in daily.values())
 
     # Week totals
     week_start_key = (today_start - timedelta(days=today_start.weekday())).strftime("%Y-%m-%d")
@@ -476,6 +517,11 @@ def build_payload(scrape=True):
         "t_sessions": t_sess,
         "t_messages": t_msgs,
         "trend": trend,
+        "t_delta": t_delta,
+        # Rolling 7 days
+        "d7_tokens": fmt_tokens(d7_tokens),
+        "d7_cost": fmt_cost(d7_cost),
+        "days": _day_bars(daily),
         # Week
         "w_tokens": fmt_tokens(w_total),
         "w_cost": fmt_cost(w_cost),
@@ -490,9 +536,13 @@ def build_payload(scrape=True):
         "u_session": usage_limits.get("session", {}).get("pct", "—"),
         "u_week": usage_limits.get("week_all", {}).get("pct", "—"),
         "u_sonnet": usage_limits.get("week_sonnet", {}).get("pct", "—"),
-        "u_reset": usage_limits.get("session", {}).get("resets", ""),
-        # Timestamp
+        "u_reset": _short_reset(usage_limits.get("session", {}).get("resets")),
+        "u_week_reset": _short_reset(usage_limits.get("week_all", {}).get("resets")),
+        # Plan label, empty when the credentials can't be read
+        "plan": f"{sub_type} {tier}" if sub_type != "Unknown" else "",
+        # Timestamp, plus epoch seconds so the template can tell stale data apart
         "updated": updated,
+        "ts": int(now.timestamp()),
     }
 
     # Model slots (up to 3)
@@ -560,6 +610,11 @@ def _test_payload():
         "t_sessions": 4,
         "t_messages": 142,
         "trend": "up",
+        "t_delta": "+24%",
+        "d7_tokens": "41.7M",
+        "d7_cost": "$96.20",
+        "days": [{"l": l, "h": h, "c": ""} for l, h in
+                 zip("TWTFSSM", [6, 10, 3, 8, 12, 0, 16])],
         "w_tokens": "28.3M",
         "w_cost": "$67.89",
         "w_sessions": 12,
@@ -583,7 +638,10 @@ def _test_payload():
         "u_session": 42,
         "u_week": 18,
         "u_sonnet": 5,
-        "u_reset": "in 3h",
+        "u_reset": "7pm",
+        "u_week_reset": "Thu 9am",
+        "plan": "Max 20x",
+        "ts": int(datetime.now(timezone.utc).timestamp()),
     }
 
 
