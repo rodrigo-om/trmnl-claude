@@ -333,7 +333,9 @@ def _scrape_usage():
         try:
             import pexpect
         except ImportError:
-            return {}
+            if sys.platform == "win32":
+                return {}
+            return _scrape_usage_pty()
         return _scrape_usage_pexpect(pexpect)
     return _scrape_usage_winpty(PtyProcess, threading)
 
@@ -418,6 +420,62 @@ def _scrape_usage_pexpect(pexpect):
     return _parse_usage_output("".join(buf))
 
 
+def _scrape_usage_pty():
+    """macOS/Linux without pexpect: drive claude through the stdlib pty module.
+
+    Same sequence and timing as _scrape_usage_pexpect, so neither needs a
+    third-party package on Unix.
+    """
+    import fcntl, pty, select, signal, struct, termios, time
+
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvp("claude", ["claude"])  # only returns on failure
+        os._exit(127)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 200, 0, 0))
+    buf = []
+
+    def drain(seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            ready, _, _ = select.select([fd], [], [], 0.4)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 8192)
+            except OSError:
+                return
+            if not chunk:
+                return
+            buf.append(chunk)
+
+    try:
+        drain(8)            # wait for the TUI to come up
+        os.write(fd, b"/usage")
+        drain(2)            # let the autocomplete menu render
+        os.write(fd, b"\r")
+        drain(1)
+        os.write(fd, b"\r")  # extra CR in case autocomplete swallowed the first
+        drain(9)            # capture the usage panel as it draws
+        os.write(fd, b"\x1b")
+        drain(0.5)
+        os.write(fd, b"/exit\r")
+        drain(2)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        os.close(fd)
+    return _parse_usage_output(b"".join(buf).decode("utf-8", errors="replace"))
+
+
 def _parse_usage_output(raw):
     """Parse /usage TUI output into dict."""
     import re
@@ -450,10 +508,17 @@ def _parse_usage_output(raw):
 
 
 def _short_reset(text):
-    """'7pm (America/Sao_Paulo)' -> '7pm'. The time zone never fits on screen."""
+    """'7pm (America/Sao_Paulo)' -> '7pm'. The time zone never fits on screen.
+
+    The PTY capture can also merge words ('Oct28at2pm'), so spaces go back
+    around the day number and 'at': 'Oct 28 at 2pm'.
+    """
+    import re
     if not text:
         return ""
-    return text.split("(")[0].strip()
+    text = text.split("(")[0].strip()
+    text = re.sub(r"(?<=\d)at(?=\d)", " at ", text)
+    return re.sub(r"(?<=[A-Za-z])(?=\d)", " ", text)
 
 
 # ── Build TRMNL payload ─────────────────────────────────────────────
@@ -468,6 +533,9 @@ def build_payload(scrape=True):
     active = _count_active_sessions(cd)
     daily, models, projects = _scan_usage(cd, since=seven_ago)
     usage_limits = _scrape_usage() if scrape else {}
+    if scrape and not usage_limits:
+        print("Usage scrape returned nothing; limits will show as unavailable",
+              file=sys.stderr)
 
     # Today
     today_key = now.strftime("%Y-%m-%d")
