@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Local only: run.sh holds the webhook URL
+run.sh
+output.log
+.DS_Store
+.claude/
