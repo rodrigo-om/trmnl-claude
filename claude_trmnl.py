@@ -744,13 +744,48 @@ def _scrape_usage_pexpect(pexpect):
     return _parse_usage_output("".join(buf))
 
 
+def _reap_pty_child(pid, fd, drain, grace=3.0):
+    """Stop the claude child without ever blocking on it.
+
+    A child that is still writing blocks once the PTY buffer fills, and a
+    blocked child never exits, not even on SIGKILL. A plain waitpid after
+    SIGTERM then hangs this run forever, and launchd starts no new run while
+    one is still going. So keep reading while the child shuts down, close our
+    end of the PTY before the last wait, and escalate to SIGKILL.
+    """
+    import signal, time
+
+    def exited():
+        try:
+            return os.waitpid(pid, os.WNOHANG)[0] != 0
+        except ChildProcessError:
+            return True
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    end = time.time() + grace
+    while time.time() < end and not exited():
+        drain(0.2)
+    if not exited():
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    os.close(fd)
+    end = time.time() + grace
+    while time.time() < end and not exited():
+        time.sleep(0.1)
+
+
 def _scrape_usage_pty():
     """macOS/Linux without pexpect: drive claude through the stdlib pty module.
 
     Same sequence and timing as _scrape_usage_pexpect, so neither needs a
     third-party package on Unix.
     """
-    import fcntl, pty, select, signal, struct, termios, time
+    import fcntl, pty, select, struct, termios, time
 
     pid, fd = pty.fork()
     if pid == 0:
@@ -788,15 +823,7 @@ def _scrape_usage_pty():
     except OSError:
         pass
     finally:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except OSError:
-            pass
-        os.close(fd)
+        _reap_pty_child(pid, fd, drain)
     return _parse_usage_output(b"".join(buf).decode("utf-8", errors="replace"))
 
 
